@@ -1,0 +1,64 @@
+---
+title: "Practical Machine Learning"
+author: "Oscar Gauna"
+date: "September 12, 2020"
+output:
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+This work is part of the Coursera Practical Machine Learning course. The objective is to use machine learning techniques to predict how well a person performs barbell lifts. If he or she does it well, a classification "A" is assigned. If not, a classification of "B", "C", "D", or "E" is assigned, for 4 different ways of doing it wrong. The data comes from the research group Groupware@LES and more information can be found here [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) and the details of the data acquisition are detailed in this document [http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf).
+
+## Procedure
+
+First we load the required libraries:
+```{r echo=TRUE, message=FALSE}
+library(caret)
+library(dplyr)
+library(e1071)
+library(parallel)
+library(doParallel)
+```
+Then we load the data that is going to be used to train the model. A seed is set for reproducibility.
+```{r echo=TRUE, cache=TRUE}
+set.seed(1234)
+data <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+dim(data)
+```
+The data has 19622 records and 160 fields. Many of these records are for identification of the subject, timestamps and summary statistics for the time windows where the data was read from the sensors. For this work, I followed 2 different approaches to select the variables (predictors) of interest. For one model, I used the raw data from the sensors, that is, all predictors with _x, _y or _z in its name. For another model, I used the calculated rotation values from each sensor, that is, roll, pitch or yaw for each sensor. I did some research on IMU sensors so I could understand which predictors to use in the model. A good reference can be found at [https://digitalcommons.calpoly.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1422&context=eesp](https://digitalcommons.calpoly.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1422&context=eesp), page 16. I also converted the 'classe' outcome to factor.
+```{r echo=TRUE, cache=TRUE}
+data <- mutate(data, classe=as.factor(classe))
+preds <- names(data)
+training_raw <- select(data,preds[grepl("_x$|_y$|_z$",preds)],classe)
+training_calc <- select(data,preds[grepl("^roll|^pitch|^yaw",preds)],classe)
+```
+To train the model, I used the Random Forest algorithm, with 5-fold cross validation to estimate its accuracy. I used this initial k-fold value since it's commonly used and to see how well it performed in my computer. Also, I used parallel processing for more efficient calculation.
+```{r echo=TRUE, cache=TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE, classProbs = TRUE)
+system.time(fit_raw <- train(classe ~ ., method="rf", trControl=fitControl, data=training_raw))
+system.time(fit_calc <- train(classe ~ ., method="rf", trControl=fitControl, data=training_calc))
+stopCluster(cluster)
+registerDoSEQ()
+confusionMatrix.train(fit_raw)
+confusionMatrix.train(fit_calc)
+```
+By looking at the confusion matrix of each model, we can see that their accuracies are very similar, but the processing time is considerably lower for the model that used the roll, pitch and yaw predictors. Thus, I chose model fit_calc for my predictions. The accuracy is roughly 98.91%, which means an estimated out-of-sample error of 100-98.91=1.09%.
+
+We then load the test data and predict the classes for the 20 given records:
+```{r echo=TRUE, cache=TRUE}
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+result <- predict(fit_calc,newdata=testing)
+
+for(i in testing$problem_id) {
+    if(i == 1) print("PREDICTIONS ON TEST SET")
+	print(paste("Problem ID", i, "=", result[i]))
+}
+```
